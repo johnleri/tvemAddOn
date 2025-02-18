@@ -1,0 +1,19 @@
+Package: tvemAddOn
+Type: Package
+Title: Multiple Imputation and Permutation Testing for tvem Models
+Version: 0.1.0
+Authors@R:
+    person("John", "Leri", "john.leri@austin.utexas.edu", role = c("aut", "cre"))
+Maintainer: Unknown
+Description: This is where more of a description belongs.
+    Use four spaces when indenting paragraphs within the Description.
+License: `use_mit_lisence()`
+Encoding: UTF-8
+LazyData: true
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+Imports: tvem
+Suggests: 
+    knitr,
+    rmarkdown
+VignetteBuilder: knitr

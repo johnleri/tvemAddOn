@@ -1,0 +1,158 @@
+---
+title: "tvemAddOn-vignette"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{tvemAddOn-vignette}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+#library(tvemAddOn)
+library(devtools)
+devtools::load_all()
+library(tvem)
+```
+
+# Introduction
+
+## Goal of `tvemAddOn`
+
+Time-varying coefficient models can be used to model interactions between variables of interest and time. In R-Statistical Software, the `tvem` package can be used to fit these types of models. The `tvem` package requires complete data. The `tvem` package also relies solely on confidence intervals to assess parameter estimates; there is currently not a way to determine if additional model parameters improve model fit.
+
+`tvemAddOn` was built to extend the `tvem` package in two ways:
+
+1.  Fit time-varying coefficient models on multiply imputed data and pool the parameter estimates.
+
+2.  Facilitate permutation tests of nested models and coefficients (fixed and time-varying).
+
+# Example with binary outcome variable
+
+Here we simulate a data set using the `tvem` package's inbuilt simulation feature.
+
+```{r}
+set.seed(100)
+data = simulate_tvem_example(simulate_binary = T)
+```
+
+## Multiple imputation
+
+The `mice` package is used to generate multiple iterations of complete data sets. See the `mice` package documentation for details about its use.
+
+```{r}
+library(mice)
+
+impute.where <- is.na(data)
+
+imp <- mice(
+  data = data,
+  seed = 100,
+  where = impute.where,
+  method = "logreg",
+  m = 10
+)
+
+imp = complete(imp, "long", include = F)
+imp.data.list = list()
+for(i in unique(imp$.imp)){
+  imp.data.list[[i]] = imp[imp$.imp == i, ]
+}; rm(imp, i, impute.where)
+```
+
+## Generate permutation sets
+
+The number of unique observations and the number of permutations are required to generate a set of permuted data. The set of permuted data will be used to reallocate the dependent variable within the `fit_tvem` function.
+
+```{r}
+sample.n = dim(imp.data.list[[1]])[1]
+n.perm = 100
+
+sets = permute::shuffleSet(n = sample.n, nset = n.perm)
+
+```
+
+## Use the `fit_tvem` function to fit a `tvem` on multiply imputed data sets
+
+The `fit_tvem` function is a wrapper for the `tvem` function. It wrapper enables:
+
+-   A list to be inputted as the data object (required to fit models across multiply imputed data sets).
+
+-   Acceptance of predefined permutation sampling scheme.
+
+-   Fits permuted data sets in parallel (note: using parallel package, only available for windows machines)
+
+Note that the `fit_tvem` function will only accept a single value for the 'knot' argument. This is different than the `tvem` function, which can accept multiple values and then fits iterative models to help select the number of knots with the best model fit.
+
+Here we fit two models which differ by a single time-varying coefficient.
+
+```{r}
+model_null = fit_tvem(
+  tvem_outcome_variable = "y",
+  tvem_time_variable = "time",
+  tvem_id_variable = "subject_id",
+  tvem_variate_effects = "x1",
+  tvem_invariate_effects = NULL,
+  tvem_knots = 2,
+  tvem_data = imp.data.list,
+  permutation_sets = sets,
+  fit_permuted = T
+)
+
+model_full = fit_tvem(
+  tvem_outcome_variable = "y",
+  tvem_time_variable = "time",
+  tvem_id_variable = "subject_id",
+  tvem_variate_effects = c("x1", "x2"),
+  tvem_invariate_effects = NULL,
+  tvem_knots = 2,
+  tvem_data = imp.data.list,
+  permutation_sets = sets,
+  fit_permuted = T
+)
+```
+
+## Compare nested models
+
+Nested models refer to models which are compared to determine if the addition of variables to the model improves model fit. A pooled multivariate Wald statistic is calculated for the multiply imputed data sets. Pooled multivariate Wald statistics are also calculated for each permuted data set. The Wald statistic from the observed data is compared to the distribution of Wald statistics from the permuted data to generate an empirical p-value for the nested model comparison.
+
+```{r}
+comp = tvem_model_comparison(model_full, model_null)
+comp[[2]]
+
+```
+
+## Plot varying coefficient estimates
+
+Extract the odds ratio and confidence intervals pooled across the multiply imputed data sets. Plot each of the time-varying coefficients. Here the p-values of the time-varying coefficients derived from the permutation analyses are used to adjust the bands of the confidence interval (solid = significant permutation p value; dotted = not significant permutation p-value).
+
+```{r}
+plot_data <- organize_plot_data(model_full)
+# add the permuted p-values to the plot_data dataframe
+plot_data$p = bind_rows(comp$pooled.coefficients$variate)[101:(100*length(comp$pooled.coefficients$variate)), "p"]
+plot_data$sig = ifelse(plot_data$p <= .05, 1, 3)
+
+# plot the time-varying coefficients
+plot_data  %>%
+  ggplot(., aes(x = time, y = OR)) +
+  facet_wrap(~variable, nrow = length(unique(plot_data$variable))) +
+  geom_line() +
+  geom_ribbon(aes(ymin = OR_CI_ll, ymax = OR_CI_ul, linetype = factor(sig, levels = c(1, 3), labels = c("significant", "not significant"))), alpha = .1, color = "gray") +
+  scale_y_continuous(name = "Odds ratio") +
+  scale_x_continuous(name = "Time") +
+  geom_hline(yintercept = 1, color = "red") +
+  theme_minimal() +
+  theme(
+    panel.grid.major =element_blank(),
+    panel.grid.minor =element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+    legend.position = c(.2, .9),
+    legend.title = element_blank()
+  )
+```
